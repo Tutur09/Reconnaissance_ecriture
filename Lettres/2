@@ -1,0 +1,242 @@
+#Application voitures
+#Je clear tt neat, je fous juste un cerveau voir si elle conduit
+import math as m
+import pygame
+import numpy as np
+import sys
+from pygame.constants import K_a
+import random as r
+
+
+pygame.init()
+from pygame.constants import K_0, K_SPACE, K_a, K_DOWN, K_RIGHT, K_z
+
+taille_fenetre = (1450, 800)
+fenetre_width = 1450
+circuit = pygame.image.load(r"C:\Users\arthu\OneDrive\Arthur\Programmation\Python\Reconnaissance_ecriture\Map_du_futur.jpg")
+fenetre = pygame.display.set_mode(taille_fenetre)
+generation_font = pygame.font.SysFont("Arial", 70)
+font = pygame.font.SysFont("Arial", 30)
+spawn_point = (730, 666)
+spawn_map = (0,0)
+map = circuit
+#Variables/Constantes
+d = 22.36
+a = 0.463
+t =0
+road = (54, 54, 54)
+green = (61, 127, 1)
+vert_accel = (0, 250, 0)
+rouge_brake = (250, 0, 0)
+grey = (100, 120, 130)
+
+elite_color = (200, 0, 200)
+
+#Classes
+class car:
+    def __init__(self, x, y, e, o, c, dist, afk, name):
+        self.x = x
+        self.y = y
+        self.e = e
+        self.o = o
+        self.c = c
+        self.dist = dist
+        self.afk = afk
+        self.name = name
+    def rect(self):
+        x, y, beta, o = self.x, self.y, self.o - a, self.o
+        x_a, y_a, c, s = x-(d*m.sin(beta)), y-(d*m.cos(beta)), m.cos(o), m.sin(o)
+        return ((round(x_a),round(y_a)),(round(x_a + 40*s),round(y_a + 40*c)),(round(x_a -20*c+40*s),round(y_a +20*s+40*c)),(round(x_a -20*c), round(y_a +20*s)))
+    def plot(self):
+        pygame.draw.polygon(fenetre, self.c, self.rect())
+        text = font.render(str(self.name), True, (255, 0, 255))
+        text_rect = text.get_rect()
+        text_rect.center = (self.x, self.y)
+        fenetre.blit(text, text_rect)
+
+    def move(self):
+        o, e = self.o, self.e
+        self.x += -m.sin(o)*e
+        self.y += -m.cos(o)*e
+        self.dist += self.e
+
+    def collision(self):
+        for cos in self.rect():
+            if fenetre.get_at(cos) == green:
+                return True
+        return False
+    def radar(self):
+        state = [0]*5
+        o, x, y = self.o, self.x, self.y
+        for j in range(5):
+            i = 0
+            if fenetre.get_at((round(x), round(y))) != road:
+                state[j] = 0
+            else:
+                while fenetre.get_at((round(x -i*m.sin(-1 + 0.5*j+ o)), round(y - i*m.cos(-1+ 0.5*j+o)))) == road and i< 140:
+                    i+=12
+                if fenetre.get_at((round(x -i*m.sin(-1 + 0.5*j+ o)), round(y - i*m.cos(-1+ 0.5*j+o)))) != road:
+                    i-=1
+                    while fenetre.get_at((round(x -i*m.sin(-1 + 0.5*j+ o)), round(y - i*m.cos(-1+ 0.5*j+o)))) != road:
+                        i-=1
+                    state[j] = (i+2)/140
+                else:
+                    state[j] = 1
+        return state
+    
+    def plot_radar(self):
+        state, x, y, o = self.radar(), self.x, self.y, self.o
+        for j in range(5):
+            pygame.draw.circle(fenetre, (250, 0, 0), (round(x -140*state[j]*m.sin(-0.8 + 0.4*j+ o)), round(y - 140*state[j]*m.cos(-0.8 + 0.4*j+o))), 2)
+
+    def get_reward(self):
+        return (self.dist / 1000)*(self.e/2)
+    
+
+def relu(array):
+    return np.maximum(0, array)
+
+
+class Layer_Dense:
+    def __init__(self, d_inputs, n_neurons, n_inputs):
+        self.d_inputs = d_inputs
+        self.n_neurons = n_neurons
+        self.n_inputs = n_inputs
+        self.weights = np.empty((n_neurons, d_inputs))
+        self.biases = np.empty((n_neurons, n_inputs))
+
+    def forward(self, inputs):
+        self.output= np.dot(self.weights, inputs) + self.biases
+
+    def attrib_r(self):
+      self.weights = 0.10 * np.random.randn(self.n_neurons, self.d_inputs)
+      self.biases = np.tile(0.1 * np.random.randn(1, self.n_neurons).reshape(-1, 1), (1, self.n_inputs))
+
+    def mut(self, p, cr):
+
+        Lay = Layer_Dense(self.d_inputs, self.n_neurons, self.n_inputs)
+
+        Lay.weights = self.weights.copy()
+        Lay.biases = self.biases.copy()
+
+        n_weights = self.n_neurons*self.d_inputs
+        num_w_mod = int(n_weights * p)
+
+        if num_w_mod > 0:
+            indices = np.unravel_index(np.random.choice(n_weights, num_w_mod, replace=False), (self.n_neurons, self.d_inputs))
+            changes_w = np.random.uniform(-cr, cr, num_w_mod)
+            Lay.weights[indices] += changes_w
+
+        n_b = self.n_neurons
+        num_b_mod = int(n_b*p)+ (1 if r.random() < 0.5 else 0)
+
+        if num_b_mod > 0:
+            indices_b = np.unravel_index(np.random.choice(n_b, num_b_mod, replace=False), (n_b, 1))
+            changes_b = np.random.uniform(-cr, cr, num_b_mod)
+            Lay.biases[indices_b] += changes_b
+        
+        return(Lay)
+
+generation = 0
+pop = 30
+nb_apprentis = 20
+p = 0.1 #Proportion des settings qui muttent dans un génome qui mute
+cr = 0.2 #Range de mutation des coeffs qui mutent
+while True:
+
+    #Récupérer l'élite
+    if generation > 0:
+        i_elite = fitness.index(max(fitness))
+        print(fitness[i_elite])
+        elite = NNs[i_elite]
+        NNs = []
+        NNs.append(elite)
+        for i in range(1, nb_apprentis+1):
+            NNs.append(elite.mut(p, cr))
+        for i in range(nb_apprentis+1, pop):
+            nn = Layer_Dense(5, 5, 1)
+            nn.attrib_r()
+            NNs.append(nn)
+    else:
+        NNs = []
+        for i in range(pop):
+            nn = Layer_Dense(5, 5, 1)
+            nn.attrib_r()
+            NNs.append(nn)
+    
+    alive = [True]*pop
+    cars = []
+    fitness = [0]*pop
+    generation += 1
+    t, remain_cars, game_on = 0, pop, True
+
+    for i in range(pop):
+        Car = car(spawn_point[0], spawn_point[1], 1, 1.55, grey, 0, 0, "")
+        cars.append(Car)
+    while game_on:
+        t+=1
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                sys.exit(0)
+
+        fenetre.blit(map, spawn_map)
+
+        #Neural Network
+        for i, Car in enumerate(cars):
+            if alive[i]:
+                NNs[i].forward(np.array([Car.radar()]).T)
+                choice = np.argmax(((NNs[i].output).T)[0])
+
+                if ((NNs[i].output).T)[0][choice] < 0:
+                    choice = -1
+                
+                if choice == 0:
+                    Car.e += 0.2/(((10*Car.e)+1))+0.02
+                if choice == 1:
+                    Car.e += -0.02 -0.03*Car.e
+                    if Car.e < 0:
+                        Car.e = 0
+                if choice == 2:
+                    Car.o -= 0.04
+                if choice == 3:
+                    Car.o += 0.04
+                if Car.e > 0:
+                    Car.e -= 0.003
+                if Car.e < 0.04:
+                    Car.afk += 1
+                else:
+                    Car.afk = 0
+                Car.c = vert_accel if choice == 0 else(rouge_brake if choice == 1 else grey)
+                if i == 0 and generation > 0:
+                    Car.c = elite_color
+                Car.move()
+        
+                if not Car.collision() and Car.afk < 6:
+                    fitness[i] += Car.get_reward()
+                else:
+                    alive[i] = False
+                    remain_cars -=1
+        
+        if remain_cars == 0:
+            game_on = False
+
+        for i, Car in enumerate(cars):
+            if alive[i]:
+                Car.plot()
+
+        if t > 3000:
+            for i, Car in enumerate(cars):
+                alive[i] = False
+                game_on = False
+
+        #Affichage
+        text = generation_font.render("Generation : " + str(generation), True, (255, 255, 0))
+        text_rect = text.get_rect()
+        text_rect.center = (fenetre_width/2, 100)
+        fenetre.blit(text, text_rect)
+
+        pygame.display.flip()
+
+        if pygame.key.get_pressed()[K_a]:
+            pygame.quit()
+            sys.exit(0)
